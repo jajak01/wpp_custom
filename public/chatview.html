@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>My WhatsApp Bot</title>
+    <script src="/socket.io/socket.io.js"></script>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; display: flex; height: 100vh; margin: 0; background-color: #f0f2f5; }
+        #sidebar { width: 350px; background: white; border-right: 1px solid #ddd; display: flex; flex-direction: column; }
+        #chat-window { flex-grow: 1; display: flex; flex-direction: column; background: #e5ddd5; }
+        
+        .header { padding: 15px; background: #ededed; font-weight: bold; border-bottom: 1px solid #ddd; }
+        #chat-list { overflow-y: auto; flex-grow: 1; }
+        .chat-item { padding: 15px; border-bottom: 1px solid #f2f2f2; cursor: pointer; transition: 0.2s; }
+        .chat-item:hover { background-color: #f5f6f6; }
+        .chat-item.active { background-color: #ebebeb; }
+
+        #messages { flex-grow: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; }
+        .msg { margin: 5px 0; padding: 8px 12px; border-radius: 8px; max-width: 70%; word-wrap: break-word; position: relative; }
+        .msg.received { background: white; align-self: flex-start; }
+        .msg.sent { background: #dcf8c6; align-self: flex-end; }
+        
+        .input-area { padding: 15px; background: #f0f2f5; display: flex; gap: 10px; }
+        input { flex-grow: 1; padding: 10px; border: none; border-radius: 20px; outline: none; }
+        button { background: #00a884; color: white; border: none; padding: 10px 20px; border-radius: 20px; cursor: pointer; }
+    </style>
+</head>
+<body>
+
+<div id="sidebar">
+    <div class="header">Chats</div>
+    <div id="chat-list">Loading chats...</div>
+</div>
+
+<div id="chat-window">
+    <div class="header" id="current-chat-name">Select a contact</div>
+    <div id="messages"></div>
+    <div class="input-area">
+        <input type="text" id="msg-input" placeholder="Type a message...">
+        <button onclick="sendMessage()">Send</button>
+    </div>
+</div>
+
+<script>
+    const socket = io(window.location.origin);
+    const session = 'My Session 1';
+    let activeChatId = null;
+
+    // 1. Load the Sidebar
+    async function loadChats() {
+        const res = await fetch(`/api/${session}/chats`);
+        const chats = await res.json();
+        const list = document.getElementById('chat-list');
+        list.innerHTML = chats.map(chat => `
+            <div class="chat-item ${activeChatId === chat.id ? 'active' : ''}" onclick="openChat('${chat.id}', '${chat.name}')">
+                <strong>${chat.name}</strong><br>
+                <small>${chat.lastMessage}</small>
+            </div>
+        `).join('');
+    }
+
+    // 2. Load Messages for specific chat
+    async function openChat(chatId, name) {
+        activeChatId = chatId;
+        document.getElementById('current-chat-name').innerText = name;
+        
+        const res = await fetch(`/api/${session}/messages/${chatId}`);
+        const messages = await res.json();
+        renderMessages(messages);
+        loadChats(); // refresh sidebar to clear unread marks
+    }
+
+    function renderMessages(messages) {
+        const container = document.getElementById('messages');
+        container.innerHTML = messages.map(m => `
+            <div class="msg ${m.fromMe ? 'sent' : 'received'}">
+                ${m.body}
+            </div>
+        `).join('');
+        container.scrollTop = container.scrollHeight;
+    }
+
+    // 3. Send Message
+    async function sendMessage() {
+        const input = document.getElementById('msg-input');
+        if (!activeChatId || !input.value) return;
+
+        // Extract phone number from ID (removes @c.us)
+        const phone = activeChatId.split('@')[0];
+
+        await fetch(`/api/${session}/send-message`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ phone: phone, message: input.value })
+        });
+
+        input.value = '';
+        openChat(activeChatId, document.getElementById('current-chat-name').innerText);
+    }
+
+    // 4. Listen for Real-time Updates
+    socket.on('new_message', (msg) => {
+        if (activeChatId === msg.from || activeChatId === msg.to) {
+            openChat(activeChatId, document.getElementById('current-chat-name').innerText);
+        } else {
+            loadChats(); // Update unread count/last message in sidebar
+        }
+    });
+
+    loadChats();
+</script>
+</body>
+</html>
